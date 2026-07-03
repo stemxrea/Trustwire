@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Trustwire",
+    "slug": "trustwire",
+    "plugins": [
+      "expo-router",
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [
+            "peripheral",
+            "central"
+          ],
+          "bluetoothAlwaysPermission": "Allow Trustwire to scan for nearby peer verification signals."
+        }
+      ]
+    ],
+    "ios": {
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Allow Trustwire to scan for nearby peer verification signals.",
+        "NSLocationWhenInUseUsageDescription": "Trustwire uses your location while scanning to map movement relative to nearby BLE and LAN targets.",
+        "NSLocalNetworkUsageDescription": "Trustwire uses the local network to discover other peer validation nodes on the same Wi-Fi connection.",
+        "NSBonjourServices": [
+          "_http._tcp.",
+          "_tcp."
+        ]
+      },
+      "bundleIdentifier": "com.trustwire.app"
+    },
+    "android": {
+      "permissions": [
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.NEARBY_WIFI_DEVICES",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_WIFI_STATE",
+        "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN"
+      ],
+      "package": "com.trustwire.app"
+    }
+  }
+}

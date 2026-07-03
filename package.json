@@ -1,0 +1,29 @@
+{
+  "name": "trustwire",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "buffer": "^6.0.3",
+    "expo": "^57.0.2",
+    "expo-dev-client": "~57.0.5",
+    "expo-device": "~57.0.0",
+    "expo-location": "~57.0.2",
+    "expo-router": "^57.0.3",
+    "react": "^19.2.7",
+    "react-native": "^0.86.0",
+    "react-native-ble-plx": "^3.5.1",
+    "react-native-network-info": "^5.2.2",
+    "react-native-tcp-socket": "^6.4.1",
+    "react-native-zeroconf": "^0.14.0"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.3"
+  },
+  "main": "index.js",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "android": "expo run:android",
+    "web": "expo start --web"
+  }
+}
