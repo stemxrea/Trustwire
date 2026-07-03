@@ -32,6 +32,11 @@ jobs:
         # The ios/ folder is gitignored; it is always produced fresh in CI.
         run: npx expo prebuild --platform ios
 
+      - name: Open ios/Trustwire.xcworkspace in Xcode
+        # Opens the workspace in Xcode on the macOS runner.
+        # Locally: open ios/Trustwire.xcworkspace
+        run: open ios/Trustwire.xcworkspace
+
       - name: Prepare SXR iPhone 17 Pro simulator
         run: |
           # Create the simulator if it doesn't already exist
