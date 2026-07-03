@@ -49,7 +49,8 @@ export default function App() {
         setUpdateState('upToDate');
         setTimeout(() => setUpdateState('idle'), 3000);
       }
-    } catch {
+    } catch (err) {
+      console.warn('[App] OTA update check failed:', err);
       setUpdateState('error');
       setTimeout(() => setUpdateState('idle'), 4000);
     }

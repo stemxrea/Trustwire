@@ -151,6 +151,10 @@ export default function DeviceRadar() {
   const zeroconf = useRef<Zeroconf | null>(null);
   const bleSweepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMounted = useRef(true);
+  // Tracks whether we are actively scanning so runBleSweep can self-terminate.
+  const isScanningRef = useRef(false);
+  // Prevents registering duplicate zeroconf listeners across resume calls.
+  const zeroconfListenersAttached = useRef(false);
 
   // Assign stable angle per device so dots don't jump around on re-render
   const angleMap = useRef<Map<string, number>>(new Map());
@@ -161,9 +165,9 @@ export default function DeviceRadar() {
     return angleMap.current.get(id)!;
   }
 
-  /** Run one BLE sweep, then schedule the next one automatically. */
+  /** Run one BLE sweep, then schedule the next sweep if still scanning. */
   const runBleSweep = useCallback(() => {
-    if (!isMounted.current) return;
+    if (!isMounted.current || !isScanningRef.current) return;
 
     bleManager.current?.stopDeviceScan();
 
@@ -197,13 +201,14 @@ export default function DeviceRadar() {
       },
     );
 
-    // After the sweep duration, restart automatically
+    // Schedule the next sweep only if still scanning
     bleSweepTimer.current = setTimeout(() => {
-      if (isMounted.current) runBleSweep();
+      if (isMounted.current && isScanningRef.current) runBleSweep();
     }, BLE_SWEEP_DURATION);
   }, []);
 
   const stopAll = useCallback(() => {
+    isScanningRef.current = false;
     if (bleSweepTimer.current) {
       clearTimeout(bleSweepTimer.current);
       bleSweepTimer.current = null;
@@ -222,6 +227,7 @@ export default function DeviceRadar() {
       return;
     }
 
+    isScanningRef.current = true;
     setScanning(true);
 
     // ── BLE scan (continuous sweeps) ─────────────────────────────────────────
@@ -233,29 +239,38 @@ export default function DeviceRadar() {
     // ── mDNS scan ───────────────────────────────────────────────────────────
     if (!zeroconf.current) {
       zeroconf.current = new Zeroconf();
-    } else {
-      zeroconf.current.stop();
     }
 
-    zeroconf.current.on('resolved', (service: ZeroconfService) => {
-      if (!isMounted.current) return;
-      setMdnsServices((prev) => {
-        if (prev.some((s) => s.name === service.name)) return prev;
-        return [
-          ...prev,
-          {
-            name: service.name,
-            host: service.host,
-            port: service.port,
-            fullName: service.fullName,
-          },
-        ];
-      });
-    });
+    // Only register listeners once; stop/restart scanning without re-attaching.
+    if (!zeroconfListenersAttached.current) {
+      zeroconfListenersAttached.current = true;
 
-    zeroconf.current.on('error', (err: Error) => {
-      if (isMounted.current) setError(`mDNS error: ${err.message}`);
-    });
+      zeroconf.current.on('resolved', (service: ZeroconfService) => {
+        if (!isMounted.current) return;
+        setMdnsServices((prev) => {
+          if (prev.some((s) => s.name === service.name)) return prev;
+          return [
+            ...prev,
+            {
+              name: service.name,
+              host: service.host,
+              port: service.port,
+              fullName: service.fullName,
+            },
+          ];
+        });
+      });
+
+      zeroconf.current.on('error', (err: Error) => {
+        if (isMounted.current) {
+          console.warn('[DeviceRadar] mDNS error:', err.message);
+          setError(`mDNS error: ${err.message}`);
+        }
+      });
+    } else {
+      // Resume: restart any previously stopped scan
+      zeroconf.current.stop();
+    }
 
     const serviceTypes = ['_http', '_https', '_smb', '_afpovertcp', '_workstation'];
     for (const type of serviceTypes) {
@@ -263,18 +278,19 @@ export default function DeviceRadar() {
     }
   }, [runBleSweep]);
 
-  // Auto-start scanning on mount and clean up on unmount
+  // Auto-start scanning on mount; clean up on unmount
   useEffect(() => {
     isMounted.current = true;
     startScan();
     return () => {
       isMounted.current = false;
+      isScanningRef.current = false;
       if (bleSweepTimer.current) clearTimeout(bleSweepTimer.current);
       bleManager.current?.stopDeviceScan();
       bleManager.current?.destroy();
       zeroconf.current?.stop();
     };
-  // startScan is stable; only run on mount
+  // Both callbacks are stable (useCallback with stable deps); run on mount only.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
