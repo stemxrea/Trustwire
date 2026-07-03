@@ -41,31 +41,60 @@ jobs:
           pod install
           cd ..
 
-      - name: Open ios/Trustwire.xcworkspace in Xcode
-        # Opens the workspace in Xcode on the macOS runner.
-        # Locally: open ios/Trustwire.xcworkspace
-        run: open ios/Trustwire.xcworkspace
-
-      - name: Prepare SXR iPhone 17 Pro simulator
+      - name: Create and boot SXR iPhone 17 Pro simulator
         run: |
-          # Create the simulator if it doesn't already exist
           SIM_NAME="SXR iPhone 17 Pro"
-          EXISTING=$(xcrun simctl list devices | grep "$SIM_NAME" | head -1)
+
+          # Use JSON output for reliable parsing; prefer iPhone 17 Pro, fall back to 16 Pro then 15 Pro
+          DEVICE_TYPE=$(xcrun simctl list devicetypes -j | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for pattern in ['iPhone 17 Pro', 'iPhone 16 Pro', 'iPhone 15 Pro']:
+    for d in data['devicetypes']:
+        if pattern in d['name'] and 'Max' not in d['name']:
+            print(d['identifier']); sys.exit(0)
+sys.exit(1)
+")
+
+          RUNTIME=$(xcrun simctl list runtimes -j | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+ios = [r for r in data['runtimes'] if 'iOS' in r.get('name','') and r.get('isAvailable', False)]
+ios.sort(key=lambda r: r.get('version','0'))
+if ios:
+    print(ios[-1]['identifier'])
+else:
+    sys.exit(1)
+")
+
+          echo "Device type: $DEVICE_TYPE"
+          echo "Runtime:     $RUNTIME"
+
+          # Reuse existing simulator with this name, or create a new one
+          EXISTING=$(xcrun simctl list devices -j | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+for devices in data['devices'].values():
+    for d in devices:
+        if d['name'] == '$SIM_NAME':
+            print(d['udid']); sys.exit(0)
+" 2>/dev/null)
+
           if [ -z "$EXISTING" ]; then
-            # Resolve the device type and a compatible runtime
-            DEVICE_TYPE=$(xcrun simctl list devicetypes | grep "iPhone 17 Pro" | grep -v "Max" | tail -1 | sed 's/.*(\(.*\))/\1/')
-            RUNTIME=$(xcrun simctl list runtimes | grep "iOS" | tail -1 | sed 's/.*(\(.*\))/\1/')
-            echo "Creating simulator: $SIM_NAME  type=$DEVICE_TYPE  runtime=$RUNTIME"
-            xcrun simctl create "$SIM_NAME" "$DEVICE_TYPE" "$RUNTIME"
+            SIM_UDID=$(xcrun simctl create "$SIM_NAME" "$DEVICE_TYPE" "$RUNTIME")
+            echo "Created simulator: $SIM_UDID"
+          else
+            SIM_UDID="$EXISTING"
+            echo "Reusing simulator: $SIM_UDID"
           fi
-          # Capture UDID and boot
-          SIM_UDID=$(xcrun simctl list devices | grep "$SIM_NAME" | sed 's/.*(\([A-F0-9-]*\)).*/\1/' | head -1)
+
           echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
-          xcrun simctl boot "$SIM_UDID" 2>/dev/null || true   # already booted is fine
-          # Open the Simulator app so the GUI is running
+
+          # Boot and open Simulator.app
+          xcrun simctl boot "$SIM_UDID" 2>/dev/null || true
           open -a Simulator
 
-      - name: Build for SXR iPhone 17 Pro simulator
+      - name: Build app for iOS Simulator
         run: |
           xcodebuild \
             -workspace ios/Trustwire.xcworkspace \
@@ -75,23 +104,30 @@ jobs:
             -destination "id=$SIM_UDID" \
             -derivedDataPath build/ios \
             CODE_SIGNING_ALLOWED=NO \
-            build | xcpretty --color || xcodebuild \
-            -workspace ios/Trustwire.xcworkspace \
-            -scheme Trustwire \
-            -configuration Debug \
-            -sdk iphonesimulator \
-            -destination "id=$SIM_UDID" \
-            -derivedDataPath build/ios \
-            CODE_SIGNING_ALLOWED=NO \
-            build
+            build 2>&1 | tail -100
 
-      - name: Install and launch app on SXR iPhone 17 Pro
+      - name: Install and launch app on SXR iPhone 17 Pro simulator
         run: |
           # Wait for the simulator to finish booting
           xcrun simctl bootstatus "$SIM_UDID" -b
-          APP_PATH="build/ios/Build/Products/Debug-iphonesimulator/Trustwire.app"
+
+          APP_PATH=$(find build/ios/Build/Products -name "Trustwire.app" -type d | head -1)
+          echo "Installing: $APP_PATH"
+
           xcrun simctl install "$SIM_UDID" "$APP_PATH"
-          xcrun simctl launch "$SIM_UDID" com.trustwire.app
+          xcrun simctl launch  "$SIM_UDID" com.trustwire.app
+
+          # Allow the app a moment to render, then capture a screenshot
+          sleep 4
+          xcrun simctl io "$SIM_UDID" screenshot simulator-screenshot.png
+          echo "Screenshot saved."
+
+      - name: Upload simulator screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-screenshot
+          path: simulator-screenshot.png
+          retention-days: 7
 
       - name: Upload iOS Simulator .app artifact
         uses: actions/upload-artifact@v4
