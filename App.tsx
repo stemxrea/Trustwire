@@ -11,6 +11,7 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import * as Updates from 'expo-updates';
 import type { ExpoUpdatesManifest } from 'expo-manifests';
+import DeviceRadar from './components/DeviceRadar';
 
 type UpdateState =
   | 'idle'
@@ -20,9 +21,12 @@ type UpdateState =
   | 'upToDate'
   | 'error';
 
+type Screen = 'home' | 'radar';
+
 export default function App() {
   const [updateState, setUpdateState] = useState<UpdateState>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [screen, setScreen] = useState<Screen>('home');
 
   // Check for OTA updates when the app loads
   useEffect(() => {
@@ -105,50 +109,76 @@ export default function App() {
     <View style={styles.container}>
       <StatusBar style="light" />
 
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.logo}>Trustwire</Text>
-        <Text style={styles.tagline}>Secure Over-The-Air Updates</Text>
-      </View>
-
-      {/* Update status */}
-      <View style={styles.updateSection}>
-        {renderUpdateBadge()}
-
+      {/* Tab bar */}
+      <View style={styles.tabBar}>
         <TouchableOpacity
-          style={[styles.button, updateState === 'checking' || updateState === 'downloading' ? styles.buttonDisabled : null]}
-          onPress={checkForUpdate}
-          disabled={updateState === 'checking' || updateState === 'downloading'}
-          accessibilityLabel="Check for updates"
-          accessibilityRole="button"
+          style={[styles.tab, screen === 'home' && styles.tabActive]}
+          onPress={() => setScreen('home')}
+          accessibilityRole="tab"
+          accessibilityLabel="Home"
         >
-          <Text style={styles.buttonText}>Check for Updates</Text>
+          <Text style={[styles.tabText, screen === 'home' && styles.tabTextActive]}>Home</Text>
         </TouchableOpacity>
-
-        {errorMessage && (
-          <Text style={styles.errorDetail}>{errorMessage}</Text>
-        )}
+        <TouchableOpacity
+          style={[styles.tab, screen === 'radar' && styles.tabActive]}
+          onPress={() => setScreen('radar')}
+          accessibilityRole="tab"
+          accessibilityLabel="Device Radar"
+        >
+          <Text style={[styles.tabText, screen === 'radar' && styles.tabTextActive]}>📡 Radar</Text>
+        </TouchableOpacity>
       </View>
 
-      {/* Info cards */}
-      <View style={styles.cards}>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Version</Text>
-          <Text style={styles.cardValue}>
-            {(Updates.manifest as ExpoUpdatesManifest | null)?.runtimeVersion ?? '1.0.0'}
-          </Text>
+      {screen === 'radar' ? (
+        <DeviceRadar />
+      ) : (
+        <View style={styles.homeContent}>
+          {/* Header */}
+          <View style={styles.header}>
+            <Text style={styles.logo}>Trustwire</Text>
+            <Text style={styles.tagline}>Secure Over-The-Air Updates</Text>
+          </View>
+
+          {/* Update status */}
+          <View style={styles.updateSection}>
+            {renderUpdateBadge()}
+
+            <TouchableOpacity
+              style={[styles.button, updateState === 'checking' || updateState === 'downloading' ? styles.buttonDisabled : null]}
+              onPress={checkForUpdate}
+              disabled={updateState === 'checking' || updateState === 'downloading'}
+              accessibilityLabel="Check for updates"
+              accessibilityRole="button"
+            >
+              <Text style={styles.buttonText}>Check for Updates</Text>
+            </TouchableOpacity>
+
+            {errorMessage && (
+              <Text style={styles.errorDetail}>{errorMessage}</Text>
+            )}
+          </View>
+
+          {/* Info cards */}
+          <View style={styles.cards}>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Version</Text>
+              <Text style={styles.cardValue}>
+                {(Updates.manifest as ExpoUpdatesManifest | null)?.runtimeVersion ?? '1.0.0'}
+              </Text>
+            </View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Platform</Text>
+              <Text style={styles.cardValue}>{Platform.OS.toUpperCase()}</Text>
+            </View>
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Channel</Text>
+              <Text style={styles.cardValue}>
+                {Updates.channel ?? 'development'}
+              </Text>
+            </View>
+          </View>
         </View>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Platform</Text>
-          <Text style={styles.cardValue}>{Platform.OS.toUpperCase()}</Text>
-        </View>
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Channel</Text>
-          <Text style={styles.cardValue}>
-            {Updates.channel ?? 'development'}
-          </Text>
-        </View>
-      </View>
+      )}
     </View>
   );
 }
@@ -164,6 +194,40 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: 24,
+  },
+  tabBar: {
+    position: 'absolute',
+    top: 52,
+    flexDirection: 'row',
+    backgroundColor: '#12243F',
+    borderRadius: 24,
+    padding: 4,
+    zIndex: 10,
+    borderWidth: 1,
+    borderColor: '#1E3A5F',
+  },
+  tab: {
+    paddingVertical: 8,
+    paddingHorizontal: 20,
+    borderRadius: 20,
+  },
+  tabActive: {
+    backgroundColor: BRAND_BLUE,
+  },
+  tabText: {
+    color: '#6A8FBF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  tabTextActive: {
+    color: '#FFFFFF',
+  },
+  homeContent: {
+    flex: 1,
+    width: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
   },
   header: {
     alignItems: 'center',
