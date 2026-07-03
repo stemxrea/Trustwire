@@ -33,7 +33,7 @@ jobs:
       - name: Generate ios/ native project (expo prebuild)
         # Generates ios/Trustwire.xcworkspace which can be opened in Xcode.
         # The ios/ folder is gitignored; it is always produced fresh in CI.
-        run: npx expo prebuild --platform ios --clean
+        run: npx expo prebuild --platform ios
 
       - name: Install CocoaPods dependencies
         run: |
