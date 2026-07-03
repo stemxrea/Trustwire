@@ -35,6 +35,12 @@ jobs:
         # The ios/ folder is gitignored; it is always produced fresh in CI.
         run: npx expo prebuild --platform ios --clean
 
+      - name: Install CocoaPods dependencies
+        run: |
+          cd ios
+          pod install
+          cd ..
+
       - name: Open ios/Trustwire.xcworkspace in Xcode
         # Opens the workspace in Xcode on the macOS runner.
         # Locally: open ios/Trustwire.xcworkspace
