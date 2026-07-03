@@ -1,0 +1,40 @@
+{
+  "cli": {
+    "version": ">= 16.0.0"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "ios": {
+        "simulator": true
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "channel": "preview"
+    },
+    "production": {
+      "channel": "production",
+      "ios": {
+        "resourceClass": "m-medium"
+      },
+      "android": {
+        "buildType": "apk"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "appleId": "$EXPO_APPLE_ID",
+        "ascAppId": "$EXPO_ASC_APP_ID",
+        "appleTeamId": "$EXPO_APPLE_TEAM_ID"
+      },
+      "android": {
+        "serviceAccountKeyPath": "$EXPO_GOOGLE_SERVICE_ACCOUNT_KEY_PATH",
+        "track": "production"
+      }
+    }
+  }
+}
