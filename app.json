@@ -9,7 +9,7 @@
     "scheme": "trustwire",
     "updates": {
       "fallbackToCacheTimeout": 0,
-      "url": "https://u.expo.dev/trustwire"
+      "url": "https://u.expo.dev/YOUR_EAS_PROJECT_ID"
     },
     "runtimeVersion": {
       "policy": "appVersion"
@@ -45,16 +45,11 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      [
-        "expo-updates",
-        {
-          "username": "trustwire"
-        }
-      ]
+      "expo-updates"
     ],
     "extra": {
       "eas": {
-        "projectId": "trustwire"
+        "projectId": "YOUR_EAS_PROJECT_ID"
       }
     }
   }

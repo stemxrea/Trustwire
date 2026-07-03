@@ -66,21 +66,50 @@ eas update --channel preview --message "WIP: new dashboard"
 
 Trustwire uses [EAS Build](https://docs.expo.dev/build/introduction/) to produce native binaries for app store submission.
 
-### 1. Log in to your Expo account
+### 1. Log in to your Expo account and create the EAS project
 
 ```bash
 eas login
+eas project:init   # generates your EAS project ID
 ```
 
-### 2. Configure EAS for your project (first time only)
+Replace `YOUR_EAS_PROJECT_ID` in **both** `app.json` fields with the UUID printed by the command above:
+
+```json
+// app.json
+"updates": { "url": "https://u.expo.dev/<your-project-id>" },
+"extra":   { "eas": { "projectId": "<your-project-id>" } }
+```
+
+### 2. Set required environment variables
+
+Submit credentials are read from environment variables so that no secrets are committed to the repository:
+
+| Variable | Where to get it |
+|----------|----------------|
+| `EXPO_APPLE_ID` | Your Apple ID email address |
+| `EXPO_ASC_APP_ID` | App Store Connect → App Information → Apple ID |
+| `EXPO_APPLE_TEAM_ID` | Apple Developer Portal → Membership |
+| `EXPO_GOOGLE_SERVICE_ACCOUNT_KEY_PATH` | Path to the JSON key downloaded from [Google Cloud Console](https://console.cloud.google.com) → IAM → Service Accounts |
+
+Set them in your shell or CI environment before running `eas submit`:
+
+```bash
+export EXPO_APPLE_ID="you@example.com"
+export EXPO_ASC_APP_ID="1234567890"
+export EXPO_APPLE_TEAM_ID="ABCDE12345"
+export EXPO_GOOGLE_SERVICE_ACCOUNT_KEY_PATH="/path/to/google-service-account.json"
+```
+
+> **Note:** The Google service-account JSON file is listed in `.gitignore` and must never be committed to the repository.
+
+### 3. Configure EAS for your project (first time only)
 
 ```bash
 eas build:configure
 ```
 
-Update `eas.json` with your Apple ID, App Store Connect App ID, Apple Team ID, and the path to your Google service-account JSON before submitting.
-
-### 3. Build a production binary
+### 4. Build a production binary
 
 ```bash
 # iOS (.ipa)
@@ -93,7 +122,7 @@ eas build --platform android --profile production
 eas build --platform all --profile production
 ```
 
-### 4. Submit to the stores
+### 5. Submit to the stores
 
 ```bash
 # iOS → Apple App Store
