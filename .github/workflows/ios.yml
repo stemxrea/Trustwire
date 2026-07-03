@@ -62,6 +62,8 @@ jobs:
           SIM_UDID=$(xcrun simctl list devices | grep "$SIM_NAME" | sed 's/.*(\([A-F0-9-]*\)).*/\1/' | head -1)
           echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
           xcrun simctl boot "$SIM_UDID" 2>/dev/null || true   # already booted is fine
+          # Open the Simulator app so the GUI is running
+          open -a Simulator
 
       - name: Build for SXR iPhone 17 Pro simulator
         run: |
@@ -85,6 +87,8 @@ jobs:
 
       - name: Install and launch app on SXR iPhone 17 Pro
         run: |
+          # Wait for the simulator to finish booting
+          xcrun simctl bootstatus "$SIM_UDID" -b
           APP_PATH="build/ios/Build/Products/Debug-iphonesimulator/Trustwire.app"
           xcrun simctl install "$SIM_UDID" "$APP_PATH"
           xcrun simctl launch "$SIM_UDID" com.trustwire.app
