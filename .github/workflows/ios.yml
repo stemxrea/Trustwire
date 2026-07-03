@@ -8,7 +8,7 @@ on:
 
 jobs:
   ios-build:
-    name: iOS Simulator Build
+    name: iOS Simulator Build (local)
     runs-on: macos-latest
 
     steps:
@@ -27,14 +27,20 @@ jobs:
       - name: TypeScript type check
         run: npx tsc --noEmit
 
-      - name: Export iOS bundle
-        run: npx expo export --platform ios --no-bytecode
-        env:
-          CI: true
+      - name: Install EAS CLI
+        run: npm install -g eas-cli
 
-      - name: Upload iOS bundle artifact
+      - name: Build development client for iOS Simulator (local)
+        # --local runs the Xcode build directly on this macOS runner.
+        # Requires EXPO_TOKEN repository secret for EAS project lookup.
+        # Add EXPO_TOKEN via: GitHub repo → Settings → Secrets → Actions.
+        run: eas build --profile development --platform ios --local --non-interactive --output ./build/trustwire-simulator.tar.gz
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Upload iOS Simulator build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-bundle
-          path: dist/
+          name: ios-simulator-build
+          path: build/trustwire-simulator.tar.gz
           retention-days: 7
