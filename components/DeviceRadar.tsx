@@ -307,7 +307,9 @@ export default function DeviceRadar() {
         {mdnsServices.map((svc, i) => {
           // mDNS has no RSSI; spread them evenly near the inner ring
           const ratio = 0.35;
-          const angle = (i / Math.max(mdnsServices.length, 1)) * 360;
+          const angle = mdnsServices.length > 1
+            ? (i / mdnsServices.length) * 360
+            : 45;
           const { x, y } = polarOffset(ratio, angle);
           return (
             <View
