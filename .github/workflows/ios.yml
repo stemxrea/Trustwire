@@ -8,7 +8,7 @@ on:
 
 jobs:
   ios-build:
-    name: iOS Simulator Build (local)
+    name: iOS Simulator Build (Xcode)
     runs-on: macos-latest
 
     steps:
@@ -22,25 +22,37 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: npm install
 
       - name: TypeScript type check
         run: npx tsc --noEmit
 
-      - name: Install EAS CLI
-        run: npm install -g eas-cli
+      - name: Generate ios/ native project (expo prebuild)
+        # Generates ios/Trustwire.xcworkspace which can be opened in Xcode.
+        # The ios/ folder is gitignored; it is always produced fresh in CI.
+        run: npx expo prebuild --platform ios --no-install --clean
 
-      - name: Build development client for iOS Simulator (local)
-        # --local runs the Xcode build directly on this macOS runner.
-        # Requires EXPO_TOKEN repository secret for EAS project lookup.
-        # Add EXPO_TOKEN via: GitHub repo → Settings → Secrets → Actions.
-        run: eas build --profile development --platform ios --local --non-interactive --output ./build/trustwire-simulator.tar.gz
-        env:
-          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      - name: Build for iOS Simulator with xcodebuild
+        run: |
+          xcodebuild \
+            -workspace ios/Trustwire.xcworkspace \
+            -scheme Trustwire \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            build | xcpretty --color || xcodebuild \
+            -workspace ios/Trustwire.xcworkspace \
+            -scheme Trustwire \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -derivedDataPath build/ios \
+            CODE_SIGNING_ALLOWED=NO \
+            build
 
-      - name: Upload iOS Simulator build artifact
+      - name: Upload iOS Simulator .app artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ios-simulator-build
-          path: build/trustwire-simulator.tar.gz
+          name: ios-simulator-app
+          path: build/ios/Build/Products/Debug-iphonesimulator/Trustwire.app
           retention-days: 7
