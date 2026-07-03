@@ -138,6 +138,9 @@ function RadarRing({ delay }: { delay: number }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
+// How long each BLE sweep runs before restarting (ms)
+const BLE_SWEEP_DURATION = 25_000;
+
 export default function DeviceRadar() {
   const [bleDevices, setBleDevices] = useState<BleEntry[]>([]);
   const [mdnsServices, setMdnsServices] = useState<MdnsEntry[]>([]);
@@ -146,6 +149,8 @@ export default function DeviceRadar() {
 
   const bleManager = useRef<BleManager | null>(null);
   const zeroconf = useRef<Zeroconf | null>(null);
+  const bleSweepTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isMounted = useRef(true);
 
   // Assign stable angle per device so dots don't jump around on re-render
   const angleMap = useRef<Map<string, number>>(new Map());
@@ -156,40 +161,20 @@ export default function DeviceRadar() {
     return angleMap.current.get(id)!;
   }
 
-  const stopAll = useCallback(() => {
+  /** Run one BLE sweep, then schedule the next one automatically. */
+  const runBleSweep = useCallback(() => {
+    if (!isMounted.current) return;
+
     bleManager.current?.stopDeviceScan();
-    zeroconf.current?.stop();
-    setScanning(false);
-  }, []);
 
-  const startScan = useCallback(async () => {
-    setError(null);
-    setBleDevices([]);
-    setMdnsServices([]);
-    angleMap.current.clear();
-
-    const granted = await requestAndroidPermissions();
-    if (!granted) {
-      setError('Bluetooth and location permissions are required.');
-      return;
-    }
-
-    setScanning(true);
-
-    // ── BLE scan ────────────────────────────────────────────────────────────
-    if (!bleManager.current) {
-      bleManager.current = new BleManager();
-    }
-
-    bleManager.current.startDeviceScan(
+    bleManager.current?.startDeviceScan(
       null,
       { allowDuplicates: true },
       (err, device: BleDevice | null) => {
+        if (!isMounted.current) return;
         if (err) {
-          // State 5 = powered off; surface it to the user
           if ((err as { errorCode?: number }).errorCode === 5) {
-            setError('Bluetooth is powered off. Please enable it and try again.');
-            stopAll();
+            setError('Bluetooth is powered off. Please enable it.');
           }
           return;
         }
@@ -212,17 +197,48 @@ export default function DeviceRadar() {
       },
     );
 
-    // Auto-stop BLE after 30 s to preserve battery
-    const bleScanTimer = setTimeout(() => {
-      bleManager.current?.stopDeviceScan();
-    }, 30_000);
+    // After the sweep duration, restart automatically
+    bleSweepTimer.current = setTimeout(() => {
+      if (isMounted.current) runBleSweep();
+    }, BLE_SWEEP_DURATION);
+  }, []);
+
+  const stopAll = useCallback(() => {
+    if (bleSweepTimer.current) {
+      clearTimeout(bleSweepTimer.current);
+      bleSweepTimer.current = null;
+    }
+    bleManager.current?.stopDeviceScan();
+    zeroconf.current?.stop();
+    setScanning(false);
+  }, []);
+
+  const startScan = useCallback(async () => {
+    setError(null);
+
+    const granted = await requestAndroidPermissions();
+    if (!granted) {
+      setError('Bluetooth and location permissions are required.');
+      return;
+    }
+
+    setScanning(true);
+
+    // ── BLE scan (continuous sweeps) ─────────────────────────────────────────
+    if (!bleManager.current) {
+      bleManager.current = new BleManager();
+    }
+    runBleSweep();
 
     // ── mDNS scan ───────────────────────────────────────────────────────────
     if (!zeroconf.current) {
       zeroconf.current = new Zeroconf();
+    } else {
+      zeroconf.current.stop();
     }
 
     zeroconf.current.on('resolved', (service: ZeroconfService) => {
+      if (!isMounted.current) return;
       setMdnsServices((prev) => {
         if (prev.some((s) => s.name === service.name)) return prev;
         return [
@@ -238,32 +254,36 @@ export default function DeviceRadar() {
     });
 
     zeroconf.current.on('error', (err: Error) => {
-      setError(`mDNS error: ${err.message}`);
+      if (isMounted.current) setError(`mDNS error: ${err.message}`);
     });
 
-    // Scan for common service types; repeat for each one
     const serviceTypes = ['_http', '_https', '_smb', '_afpovertcp', '_workstation'];
     for (const type of serviceTypes) {
       zeroconf.current.scan(type, 'tcp', 'local.');
     }
+  }, [runBleSweep]);
 
-    return () => clearTimeout(bleScanTimer);
-  }, [stopAll]);
-
-  // Cleanup on unmount
+  // Auto-start scanning on mount and clean up on unmount
   useEffect(() => {
+    isMounted.current = true;
+    startScan();
     return () => {
+      isMounted.current = false;
+      if (bleSweepTimer.current) clearTimeout(bleSweepTimer.current);
       bleManager.current?.stopDeviceScan();
       bleManager.current?.destroy();
       zeroconf.current?.stop();
     };
+  // startScan is stable; only run on mount
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <View style={styles.container}>
-      <Text style={styles.heading}>Device Radar</Text>
+      <Text style={styles.appName}>Trustwire</Text>
+      <Text style={styles.heading}>📡 Device Radar</Text>
 
       {/* Radar canvas */}
       <View style={styles.radarContainer}>
@@ -305,7 +325,6 @@ export default function DeviceRadar() {
 
         {/* mDNS service dots */}
         {mdnsServices.map((svc, i) => {
-          // mDNS has no RSSI; spread them evenly near the inner ring
           const ratio = 0.35;
           const angle = mdnsServices.length > 1
             ? (i / mdnsServices.length) * 360
@@ -325,6 +344,13 @@ export default function DeviceRadar() {
 
         {/* Centre dot */}
         <View style={styles.centerDot} />
+
+        {/* Scanning indicator */}
+        {scanning && (
+          <View style={styles.scanningBadge}>
+            <Text style={styles.scanningText}>● LIVE</Text>
+          </View>
+        )}
       </View>
 
       {/* Legend */}
@@ -335,18 +361,18 @@ export default function DeviceRadar() {
         </View>
         <View style={styles.legendItem}>
           <View style={[styles.legendDot, styles.dotMdns]} />
-          <Text style={styles.legendText}>mDNS ({mdnsServices.length})</Text>
+          <Text style={styles.legendText}>Wi-Fi ({mdnsServices.length})</Text>
         </View>
       </View>
 
-      {/* Scan button */}
+      {/* Pause / Resume button */}
       <TouchableOpacity
         style={[styles.button, scanning && styles.buttonActive]}
         onPress={scanning ? stopAll : startScan}
         accessibilityRole="button"
-        accessibilityLabel={scanning ? 'Stop scanning' : 'Start scanning'}
+        accessibilityLabel={scanning ? 'Pause scanning' : 'Resume scanning'}
       >
-        <Text style={styles.buttonText}>{scanning ? 'Stop Scan' : 'Start Scan'}</Text>
+        <Text style={styles.buttonText}>{scanning ? '⏸ Pause' : '▶ Resume'}</Text>
       </TouchableOpacity>
 
       {error && <Text style={styles.errorText}>{error}</Text>}
@@ -391,14 +417,21 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: BRAND_DARK,
     alignItems: 'center',
-    paddingTop: 16,
+    paddingTop: 52,
     paddingHorizontal: 16,
   },
-  heading: {
+  appName: {
     color: '#FFFFFF',
-    fontSize: 22,
-    fontWeight: '700',
-    marginBottom: 16,
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  heading: {
+    color: '#AAAAAA',
+    fontSize: 15,
+    fontWeight: '500',
+    marginBottom: 12,
     letterSpacing: 0.5,
   },
 
@@ -448,6 +481,21 @@ const styles = StyleSheet.create({
     backgroundColor: BRAND_BLUE,
     left: RADAR_RADIUS - 5,
     top: RADAR_RADIUS - 5,
+  },
+  scanningBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 12,
+    backgroundColor: 'rgba(0,200,83,0.15)',
+    borderRadius: 8,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+  },
+  scanningText: {
+    color: BRAND_GREEN,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1,
   },
   dot: {
     position: 'absolute',
