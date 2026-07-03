@@ -32,13 +32,31 @@ jobs:
         # The ios/ folder is gitignored; it is always produced fresh in CI.
         run: npx expo prebuild --platform ios --no-install --clean
 
-      - name: Build for iOS Simulator with xcodebuild
+      - name: Prepare SXR iPhone 17 Pro simulator
+        run: |
+          # Create the simulator if it doesn't already exist
+          SIM_NAME="SXR iPhone 17 Pro"
+          EXISTING=$(xcrun simctl list devices | grep "$SIM_NAME" | head -1)
+          if [ -z "$EXISTING" ]; then
+            # Resolve the device type and a compatible runtime
+            DEVICE_TYPE=$(xcrun simctl list devicetypes | grep "iPhone 17 Pro" | grep -v "Max" | tail -1 | sed 's/.*(\(.*\))/\1/')
+            RUNTIME=$(xcrun simctl list runtimes | grep "iOS" | tail -1 | sed 's/.*(\(.*\))/\1/')
+            echo "Creating simulator: $SIM_NAME  type=$DEVICE_TYPE  runtime=$RUNTIME"
+            xcrun simctl create "$SIM_NAME" "$DEVICE_TYPE" "$RUNTIME"
+          fi
+          # Capture UDID and boot
+          SIM_UDID=$(xcrun simctl list devices | grep "$SIM_NAME" | sed 's/.*(\([A-F0-9-]*\)).*/\1/' | head -1)
+          echo "SIM_UDID=$SIM_UDID" >> "$GITHUB_ENV"
+          xcrun simctl boot "$SIM_UDID" 2>/dev/null || true   # already booted is fine
+
+      - name: Build for SXR iPhone 17 Pro simulator
         run: |
           xcodebuild \
             -workspace ios/Trustwire.xcworkspace \
             -scheme Trustwire \
             -configuration Debug \
             -sdk iphonesimulator \
+            -destination "id=$SIM_UDID" \
             -derivedDataPath build/ios \
             CODE_SIGNING_ALLOWED=NO \
             build | xcpretty --color || xcodebuild \
@@ -46,9 +64,16 @@ jobs:
             -scheme Trustwire \
             -configuration Debug \
             -sdk iphonesimulator \
+            -destination "id=$SIM_UDID" \
             -derivedDataPath build/ios \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+      - name: Install and launch app on SXR iPhone 17 Pro
+        run: |
+          APP_PATH="build/ios/Build/Products/Debug-iphonesimulator/Trustwire.app"
+          xcrun simctl install "$SIM_UDID" "$APP_PATH"
+          xcrun simctl launch "$SIM_UDID" com.trustwire.app
 
       - name: Upload iOS Simulator .app artifact
         uses: actions/upload-artifact@v4
