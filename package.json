@@ -5,11 +5,10 @@
   "dependencies": {
     "buffer": "^6.0.3",
     "expo": "^57.0.2",
-    "expo-dev-client": "~57.0.5",
     "expo-device": "~57.0.0",
     "expo-location": "~57.0.2",
-    "expo-router": "^57.0.3",
-    "react": "^19.2.7",
+    "expo-sensors": "~57.0.1",
+    "react": "19.2.3",
     "react-native": "^0.86.0",
     "react-native-ble-plx": "^3.5.1",
     "react-native-network-info": "^5.2.2",
