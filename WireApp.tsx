@@ -116,9 +116,9 @@ export default function App() {
 
   const triggerIosLocalNetworkDialog = async () => {
     try {
-      const ip = await NetworkInfo.getIPAddress();
-      const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')) : '192.168.1';
-      const gateway = `${subnetBase}.1`;
+const ip = await NetworkInfo.getIPAddress();
+const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')) : '10.0.0';
+const gateway = `${subnetBase}.1`;
 
       await new Promise<void>((resolve) => {
         const client = TcpSocket.createConnection({ host: gateway, port: 80 }, () => {
@@ -379,9 +379,9 @@ export default function App() {
         // Ignore SSID lookup failures and keep fallback naming.
       }
 
-      const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')) : '192.168.1';
+const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')) : '10.0.0';
 
-      const targets = [1, 2, 10, 20, 30, 40, 50, 80, 100, 101, 102, 110, 115, 120, 130, 140, 150, 200, 254];
+const targets = [1, 2, 10, 20, 30, 40, 50, 80, 100, 101, 102, 110, 115, 120, 130, 140, 150, 200, 254];
       let discoveredCount = 0;
       for (const host of targets) {
         const testIp = `${subnetBase}.${host}`;
@@ -629,7 +629,7 @@ export default function App() {
             <Text style={styles.moduleTitle}>⚡ PORT MATRIX SERVICE PROBER</Text>
             <TextInput
               style={styles.terminalInput}
-              placeholder="Enter Target Subnet IP (e.g., 192.168.1.1)"
+              placeholder="Enter Target Subnet IP Address"
               placeholderTextColor="#334155"
               value={targetPortIp}
               onChangeText={setTargetPortIp}

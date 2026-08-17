@@ -49,3 +49,24 @@ If you need Bonjour service discovery, also add `NSBonjourServices` entries for 
 - BLE scan starts immediately and refreshes periodically.
 - LAN scan uses zeroconf and refreshes periodically.
 - Discovered devices are listed in descending `lastSeen` order.
+
+## Running modes (important)
+
+Trustwire is configured to launch the app UI directly (no Expo launcher/login screen).
+
+- For development with live reload: run the Metro server and open Trustwire.
+- For distribution/user usage: install a **Release** build.
+
+### iOS
+
+- Dev flow: `npm run dev` (or `npm run start:dev-client`) + `npm run ios:dev`
+- User-like flow: `npm run ios:release`
+
+### Android
+
+- Dev flow: `npm run dev` + `npm run android:dev`
+- User-like flow: `npm run android:release`
+
+### Quick script check
+
+Run `npm run` to list all available scripts.

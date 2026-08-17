@@ -7,6 +7,7 @@ import { Buffer } from 'buffer';
 import * as Location from 'expo-location';
 import Zeroconf from 'react-native-zeroconf';
 import RadarScreen from './RadarScreen';
+import { uploadLocalFirmware as runLocalFirmwareUpload } from './uploadLocalFirmware';
 
 let bleManager: BleManager | null = null;
 const RADAR_RADIUS = 160;
@@ -25,6 +26,7 @@ const BLE_NEAR_DISTANCE_M = 0.4;
 const BLE_VERY_NEAR_DISTANCE_M = 0.15;
 const BLE_DISTANCE_MIN_M = 0.1;
 const BLE_DISTANCE_MAX_M = 45;
+const SCAN_DISPATCH_THROTTLE_MS = 400;
 
 const normalizeAngle = (deg: number) => ((deg % 360) + 360) % 360;
 
@@ -59,6 +61,49 @@ const getLanZoneLabel = (ip: string) => {
   if (lastOctet <= 127) return 'ZONE B';
   if (lastOctet <= 191) return 'ZONE C';
   return 'ZONE D';
+};
+
+const normalizeTxtMetadata = (txtCandidate: any): Record<string, string> => {
+  if (!txtCandidate) return {};
+
+  if (Array.isArray(txtCandidate)) {
+    return txtCandidate.reduce<Record<string, string>>((acc, item) => {
+      if (typeof item !== 'string') return acc;
+      const [key, ...valueParts] = item.split('=');
+      if (!key) return acc;
+      acc[key.trim()] = valueParts.join('=').trim();
+      return acc;
+    }, {});
+  }
+
+  if (typeof txtCandidate === 'object') {
+    return Object.entries(txtCandidate).reduce<Record<string, string>>((acc, [key, value]) => {
+      if (!key) return acc;
+      if (typeof value === 'string') {
+        acc[key] = value;
+      } else if (Array.isArray(value)) {
+        acc[key] = value.map((v) => String(v)).join('');
+      } else {
+        acc[key] = String(value ?? '');
+      }
+      return acc;
+    }, {});
+  }
+
+  if (typeof txtCandidate === 'string') {
+    return txtCandidate
+      .split(/[;,]/)
+      .map((entry) => entry.trim())
+      .filter(Boolean)
+      .reduce<Record<string, string>>((acc, entry) => {
+        const [key, ...valueParts] = entry.split('=');
+        if (!key) return acc;
+        acc[key.trim()] = valueParts.join('=').trim();
+        return acc;
+      }, {});
+  }
+
+  return {};
 };
 
 type DeviceFocusFilter = 'ALL' | 'IPHONES' | 'LAPTOPS' | 'ROUTERS' | 'TELEVISIONS' | 'CAMERAS' | 'OTHER';
@@ -165,6 +210,84 @@ export default function App() {
   const zeroconfStopTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const headingRef = useRef<number | null>(null);
   const headingInitializedRef = useRef(false);
+  const packetTimestampsRef = useRef<number[]>([]);
+  const bleQueuedDevicesRef = useRef<Map<string, any>>(new Map());
+  const bleFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [packetsPerSecond, setPacketsPerSecond] = useState(0);
+
+  const flushQueuedBleUpdates = () => {
+    const queued = Array.from(bleQueuedDevicesRef.current.values());
+    bleQueuedDevicesRef.current.clear();
+    bleFlushTimerRef.current = null;
+
+    if (queued.length === 0) return;
+
+    setDiscoveredDevices((prev) => {
+      const updated = [...prev];
+
+      queued.forEach((nextDevice) => {
+        const existingIndex = updated.findIndex((d) => d.id === nextDevice.id);
+
+        if (existingIndex === -1) {
+          updated.push(nextDevice);
+          return;
+        }
+
+        const previousDistance = updated[existingIndex]?.estDistanceM;
+        const incomingDistance = nextDevice.estDistanceM;
+        const previousRssi = typeof updated[existingIndex]?.rssi === 'number' ? updated[existingIndex].rssi : nextDevice.rssi;
+        const previousStableCount = typeof updated[existingIndex]?.stableCount === 'number' ? updated[existingIndex].stableCount : 0;
+        let smoothedDistance = incomingDistance;
+        let stableCount = 0;
+
+        if (typeof previousDistance === 'number') {
+          const delta = incomingDistance - previousDistance;
+          const rssiDelta = Math.abs((nextDevice.rssi ?? -80) - (previousRssi ?? -80));
+
+          if (Math.abs(delta) <= BLE_STABLE_DISTANCE_DEADBAND_M && rssiDelta <= BLE_STABLE_RSSI_DEADBAND_DB) {
+            stableCount = previousStableCount + 1;
+          }
+
+          if (stableCount >= BLE_STABLE_HOLD_COUNT) {
+            smoothedDistance = previousDistance;
+          } else if (Math.abs(delta) < BLE_DISTANCE_DEADBAND_M) {
+            smoothedDistance = previousDistance;
+          } else {
+            const clampedDelta = Math.max(-BLE_DISTANCE_MAX_STEP_M, Math.min(BLE_DISTANCE_MAX_STEP_M, delta));
+            const limitedTarget = previousDistance + clampedDelta;
+            smoothedDistance = previousDistance + (limitedTarget - previousDistance) * BLE_DISTANCE_SMOOTHING_ALPHA;
+          }
+        }
+
+        if (typeof nextDevice.rssi === 'number') {
+          if (nextDevice.rssi >= BLE_VERY_NEAR_RSSI_DBM) {
+            smoothedDistance = BLE_VERY_NEAR_DISTANCE_M;
+          } else if (nextDevice.rssi >= BLE_NEAR_RSSI_DBM) {
+            smoothedDistance = Math.min(smoothedDistance, BLE_NEAR_DISTANCE_M);
+          }
+        }
+
+        updated[existingIndex] = {
+          ...updated[existingIndex],
+          ...nextDevice,
+          estDistanceM: smoothedDistance,
+          stableCount,
+        };
+      });
+
+      return updated;
+    });
+  };
+
+  const queueBleUpdate = (nextDevice: any) => {
+    bleQueuedDevicesRef.current.set(nextDevice.id, nextDevice);
+
+    if (!bleFlushTimerRef.current) {
+      bleFlushTimerRef.current = setTimeout(() => {
+        flushQueuedBleUpdates();
+      }, SCAN_DISPATCH_THROTTLE_MS);
+    }
+  };
 
   // Polar Coordinate Mapping For Radar Display
   const calculateRadarCoordinates = (device: any) => {
@@ -322,6 +445,13 @@ export default function App() {
       const addresses = Array.isArray(service?.addresses) ? service.addresses : [];
       const ipv4 = addresses.find((addr: string) => /^\d+\.\d+\.\d+\.\d+$/.test(addr));
       const serviceName = String(service?.name || service?.host || '').trim();
+      const hostName = String(service?.host || ipv4 || '').trim();
+      const serviceType = `_${String(service?.type || 'trustwire')}._${String(service?.protocol || 'tcp')}`;
+      const txtMetadata = {
+        ...normalizeTxtMetadata(service?.txt),
+        ...normalizeTxtMetadata(service?.txtRecord),
+        ...normalizeTxtMetadata(service?.txtRaw),
+      };
       if (!ipv4 || !serviceName) return;
 
       setDiscoveredDevices((prev) =>
@@ -330,6 +460,10 @@ export default function App() {
           return {
             ...item,
             name: serviceName,
+            serviceName,
+            hostName,
+            serviceType,
+            txtMetadata,
             brand: item.brand === 'IP Network Client' ? 'mDNS Resolved Host' : item.brand,
           };
         }),
@@ -443,85 +577,42 @@ const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')
           }
 
           if (device) {
-            setDiscoveredDevices((prev) => {
-              const existingIndex = prev.findIndex((d) => d.id === device.id);
-              const fallbackBleName = `BLE ${String(device.id || 'NO-ID').slice(0, 8)}`;
-              const bleName = device.name || device.localName || fallbackBleName;
-              const metadataSnapshot = getBleMetadataSnapshot(device.manufacturerData || undefined);
-              const companyBrand = metadataSnapshot.companyId ? COMPANY_BRAND_MAP[metadataSnapshot.companyId] : undefined;
-              const normalizedName = String(bleName || '').trim();
-              const displayName = isGenericDeviceName(normalizedName)
-                ? `${companyBrand || 'BLE'} Device`
-                : normalizedName;
+            const fallbackBleName = `BLE ${String(device.id || 'NO-ID').slice(0, 8)}`;
+            const bleName = device.name || device.localName || fallbackBleName;
+            const metadataSnapshot = getBleMetadataSnapshot(device.manufacturerData || undefined);
+            const companyBrand = metadataSnapshot.companyId ? COMPANY_BRAND_MAP[metadataSnapshot.companyId] : undefined;
+            const normalizedName = String(bleName || '').trim();
+            const displayName = isGenericDeviceName(normalizedName)
+              ? `${companyBrand || 'BLE'} Device`
+              : normalizedName;
 
-              const txPowerLevel = typeof device.txPowerLevel === 'number' ? device.txPowerLevel : -59;
-              const nextDevice = {
-                id: device.id,
-                name: displayName,
-                localName: device.localName || '',
-                type: 'BLE',
-                rssi: device.rssi ?? -80,
-                brand: companyBrand || 'BLE Peripheral',
-                txPowerLevel,
-                estDistanceM: estimateBleDistanceMeters(device.rssi ?? undefined, txPowerLevel),
-                manufacturerData: device.manufacturerData || '',
-                serviceUUIDs: Array.isArray(device.serviceUUIDs) ? device.serviceUUIDs.join(' ') : '',
-                manufacturerCompanyId: metadataSnapshot.companyId,
-                metadataHint: metadataSnapshot.metadataHint,
-                manufacturerHex: metadataSnapshot.manufacturerHex,
-              };
+            const txPowerLevel = typeof device.txPowerLevel === 'number' ? device.txPowerLevel : -59;
+            const nextDevice = {
+              id: device.id,
+              name: displayName,
+              localName: device.localName || '',
+              type: 'BLE',
+              rssi: device.rssi ?? -80,
+              brand: companyBrand || 'BLE Peripheral',
+              txPowerLevel,
+              estDistanceM: estimateBleDistanceMeters(device.rssi ?? undefined, txPowerLevel),
+              manufacturerData: device.manufacturerData || '',
+              serviceUUIDs: Array.isArray(device.serviceUUIDs) ? device.serviceUUIDs.join(' ') : '',
+              manufacturerCompanyId: metadataSnapshot.companyId,
+              metadataHint: metadataSnapshot.metadataHint,
+              manufacturerHex: metadataSnapshot.manufacturerHex,
+            };
 
-              if (existingIndex === -1) {
-                return [...prev, nextDevice];
-              }
-
-              const updated = [...prev];
-              const previousDistance = updated[existingIndex]?.estDistanceM;
-              const incomingDistance = nextDevice.estDistanceM;
-              const previousRssi = typeof updated[existingIndex]?.rssi === 'number' ? updated[existingIndex].rssi : nextDevice.rssi;
-              const previousStableCount = typeof updated[existingIndex]?.stableCount === 'number' ? updated[existingIndex].stableCount : 0;
-              let smoothedDistance = incomingDistance;
-              let stableCount = 0;
-
-              if (typeof previousDistance === 'number') {
-                const delta = incomingDistance - previousDistance;
-                const rssiDelta = Math.abs((nextDevice.rssi ?? -80) - (previousRssi ?? -80));
-
-                if (Math.abs(delta) <= BLE_STABLE_DISTANCE_DEADBAND_M && rssiDelta <= BLE_STABLE_RSSI_DEADBAND_DB) {
-                  stableCount = previousStableCount + 1;
-                }
-
-                if (stableCount >= BLE_STABLE_HOLD_COUNT) {
-                  smoothedDistance = previousDistance;
-                } else if (Math.abs(delta) < BLE_DISTANCE_DEADBAND_M) {
-                  smoothedDistance = previousDistance;
-                } else {
-                  const clampedDelta = Math.max(-BLE_DISTANCE_MAX_STEP_M, Math.min(BLE_DISTANCE_MAX_STEP_M, delta));
-                  const limitedTarget = previousDistance + clampedDelta;
-                  smoothedDistance = previousDistance + (limitedTarget - previousDistance) * BLE_DISTANCE_SMOOTHING_ALPHA;
-                }
-              }
-
-              if (typeof nextDevice.rssi === 'number') {
-                if (nextDevice.rssi >= BLE_VERY_NEAR_RSSI_DBM) {
-                  smoothedDistance = BLE_VERY_NEAR_DISTANCE_M;
-                } else if (nextDevice.rssi >= BLE_NEAR_RSSI_DBM) {
-                  smoothedDistance = Math.min(smoothedDistance, BLE_NEAR_DISTANCE_M);
-                }
-              }
-
-              updated[existingIndex] = {
-                ...updated[existingIndex],
-                ...nextDevice,
-                estDistanceM: smoothedDistance,
-                stableCount,
-              };
-              return updated;
-            });
+            queueBleUpdate(nextDevice);
           }
         });
       });
     } else {
+      if (bleFlushTimerRef.current) {
+        clearTimeout(bleFlushTimerRef.current);
+        bleFlushTimerRef.current = null;
+      }
+      bleQueuedDevicesRef.current.clear();
       spinValue.setValue(0);
       getBleManager()?.stopDeviceScan();
       setSystemLog('Scanner Standby');
@@ -560,28 +651,57 @@ const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')
   };
 
   // --- OVER-THE-AIR (OTA) FIRMWARE FLASHING ENGINE ---
-  const executeOtaFlash = () => {
-    if (!selectedDevice) return;
+  const uploadLocalFirmware = async (onSuccess?: (message: string) => void) => {
+    if (!selectedDevice) {
+      setOtaStatusLog((prev) => [...prev, '[OTA] No target selected.']);
+      return;
+    }
+
+    const deviceIp = typeof selectedDevice?.id === 'string' && /^\d+\.\d+\.\d+\.\d+$/.test(selectedDevice.id)
+      ? selectedDevice.id
+      : null;
+
+    if (!deviceIp) {
+      setOtaStatusLog((prev) => [...prev, '[OTA] Selected target is not a local IP node.']);
+      return;
+    }
+
     setIsFlashing(true);
     setOtaProgress(0);
-    setOtaStatusLog([`[OTA] Initializing Session for ${selectedDevice.name}`]);
+    setOtaStatusLog([
+      `[OTA] Initializing upload to ${deviceIp}`,
+      '[OTA] Awaiting firmware binary selection...',
+    ]);
 
-    let progress = 0;
-    const interval = setInterval(() => {
-      progress += 10;
-      setOtaProgress(progress);
-      setOtaStatusLog(prev => [
-        ...prev, 
-        `[OTA] Writing chunk frame block ${progress / 10}/10...`,
-        `[ACK] Block offset verified successfully.`
-      ]);
-
-      if (progress >= 100) {
-        clearInterval(interval);
-        setIsFlashing(false);
-        setOtaStatusLog(prev => [...prev, `🎉 OTA FLASH SUCCESSFUL: Device updated to ${firmwareVersion}`]);
-      }
-    }, 400);
+    try {
+      await runLocalFirmwareUpload({
+        deviceIp,
+        onProgress: (progress) => {
+          setOtaProgress(progress);
+          if (progress > 0) {
+            setOtaStatusLog((prev) =>
+              prev[prev.length - 1]?.includes('Upload progress')
+                ? [...prev.slice(0, -1), `[OTA] Upload progress: ${progress}%`]
+                : [...prev, `[OTA] Upload progress: ${progress}%`],
+            );
+          }
+        },
+        onSuccess: () => {
+          setOtaProgress(100);
+          const successMessage =
+            '✅ OTA upload accepted. Remote node is verifying payload and preparing to reboot.';
+          setOtaStatusLog((prev) => [...prev, successMessage]);
+          onSuccess?.(successMessage);
+        },
+        onError: (error) => {
+          setOtaStatusLog((prev) => [...prev, `[OTA] Upload error: ${error}`]);
+        },
+      });
+    } catch (error: any) {
+      setOtaStatusLog((prev) => [...prev, `[OTA] Upload error: ${error?.message || 'unknown failure'}`]);
+    } finally {
+      setIsFlashing(false);
+    }
   };
 
   const getDeviceDistanceMeters = (device: any): number => {
@@ -685,7 +805,7 @@ const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')
     [discoveredDevices],
   );
 
-  const focusFilteredDevices = useMemo(
+  const esp32Stream = useMemo(
     () =>
       categorizedDevices
         .filter(({ device, distanceMeters, category }) => {
@@ -695,7 +815,12 @@ const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')
         })
         .map(({ device, distanceMeters }) => ({
           id: String(device.id),
+          macAddress: String(device.id),
           name: String(device.name || 'Unknown Device'),
+          serviceName: String(device.serviceName || device.name || 'Unknown Service'),
+          hostName: String(device.hostName || device.id || 'unknown.local'),
+          serviceType: String(device.serviceType || '_trustwire._tcp'),
+          txtMetadata: normalizeTxtMetadata(device.txtMetadata || device.txt || device.txtRecord || device.txtRaw),
           distanceM: Number.isFinite(distanceMeters) ? distanceMeters : 100,
           angleDeg:
             typeof device.angleDeg === 'number' && Number.isFinite(device.angleDeg)
@@ -705,11 +830,56 @@ const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')
                     .split('')
                     .reduce((hash, ch) => ch.charCodeAt(0) + ((hash << 5) - hash), 0) % 360,
                 ),
-          type: device.type === 'BLE' ? 'BLE' : 'WIFI',
+          rssi: Number.isFinite(device.rssi) ? Number(device.rssi) : -88,
           rawDevice: device,
         })),
     [categorizedDevices, selectedDeviceFocusFilter],
   );
+
+  const isNodeMoving = useMemo(
+    () =>
+      esp32Stream.some((point) => {
+        const source = point.rawDevice;
+        const gx = source?.gyroX ?? source?.gx ?? source?.imu?.gyroX ?? source?.imu?.gx;
+        const gy = source?.gyroY ?? source?.gy ?? source?.imu?.gyroY ?? source?.imu?.gy;
+        const gz = source?.gyroZ ?? source?.gz ?? source?.imu?.gyroZ ?? source?.imu?.gz;
+        const magnitude = Math.sqrt(
+          (Number.isFinite(gx) ? Number(gx) : 0) ** 2 +
+            (Number.isFinite(gy) ? Number(gy) : 0) ** 2 +
+            (Number.isFinite(gz) ? Number(gz) : 0) ** 2,
+        );
+        return magnitude >= 0.12;
+      }),
+    [esp32Stream],
+  );
+
+  const txtPacketsParsed = useMemo(
+    () =>
+      esp32Stream.reduce((count, service) => {
+        const metadata = service.txtMetadata;
+        return count + (metadata ? Object.keys(metadata).length : 0);
+      }, 0),
+    [esp32Stream],
+  );
+
+  useEffect(() => {
+    const now = Date.now();
+    if (esp32Stream.length > 0) {
+      packetTimestampsRef.current.push(...Array(esp32Stream.length).fill(now));
+    }
+    packetTimestampsRef.current = packetTimestampsRef.current.filter((ts) => ts >= now - 1000);
+    setPacketsPerSecond(packetTimestampsRef.current.length);
+  }, [esp32Stream]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = Date.now();
+      packetTimestampsRef.current = packetTimestampsRef.current.filter((ts) => ts >= now - 1000);
+      setPacketsPerSecond(packetTimestampsRef.current.length);
+    }, 250);
+
+    return () => clearInterval(timer);
+  }, []);
 
   const selectedDeviceDistanceText = selectedDevice?.type === 'BLE'
     ? `${(typeof selectedDevice?.estDistanceM === 'number' ? selectedDevice.estDistanceM : estimateBleDistanceMeters(selectedDevice?.rssi)).toFixed(1)}m (live estimate)`
@@ -738,12 +908,10 @@ const subnetBase = ip && !ip.includes(':') ? ip.substring(0, ip.lastIndexOf('.')
         {activeTab === 'RADAR' ? (
           <View style={styles.pageBody}>
             <RadarScreen
-              devices={focusFilteredDevices}
-              headingDeg={userHeadingDeg}
+              discoveredServices={esp32Stream}
               isScanning={isScanning}
+              txtPacketsParsed={txtPacketsParsed}
               onToggleScan={() => setIsScanning((prev) => !prev)}
-              statusText={isScanning ? 'Scanner Active' : 'Scanner Standby'}
-              focusLabel={selectedDeviceFocusFilter}
               onNavigateTargets={() => setActiveTab('TARGETS')}
               onNavigateDiagnostics={() => setActiveTab('TARGETS')}
               onNavigatePorts={() => setActiveTab('PORTS')}
@@ -799,7 +967,11 @@ placeholder="Enter Target Subnet IP Address"
                 <Text style={styles.statusTelemetryText}>Name: {selectedDevice.name}</Text>
                 <Text style={styles.statusTelemetryText}>Protocol Boundary: {selectedDevice.type}</Text>
                 
-                <TouchableOpacity style={[styles.actionButton, {marginTop: 15, backgroundColor: '#00E5FF'}]} onPress={executeOtaFlash} disabled={isFlashing}>
+                <TouchableOpacity
+                  style={[styles.actionButton, {marginTop: 15, backgroundColor: '#00E5FF'}]}
+                  onPress={() => uploadLocalFirmware()}
+                  disabled={isFlashing}
+                >
                   {isFlashing ? <ActivityIndicator color="#000" /> : <Text style={[styles.actionButtonText, {color: '#000'}]}>INITIALIZE FIRMWARE FLASH</Text>}
                 </TouchableOpacity>
 
